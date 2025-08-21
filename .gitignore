@@ -1,0 +1,26 @@
+# Never commit secrets
+.env
+
+# MySQL & other runtime data (keep the folders, ignore contents)
+data/*
+!data/.gitkeep
+data/mysql/*
+!data/mysql/.gitkeep
+data/composer-cache/*
+!data/composer-cache/.gitkeep
+
+# Optional certs (prod LE lives on host; dev self-signed may live here)
+certs/*
+!certs/.gitkeep
+
+# Solr core data if you store it here (usually large & generated)
+solr/core/*
+!solr/core/.gitkeep
+
+# Logs
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
