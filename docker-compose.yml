@@ -74,7 +74,21 @@ services:
       - drupal
       - /var/solr/data/core
     networks: [back]
-
+  composer:
+    build: ./composer81
+    container_name: composer81
+    working_dir: /workspace
+    user: "${HOST_UID}:${HOST_GID}"
+    environment:
+      COMPOSER_MEMORY_LIMIT: -1
+      COMPOSER_ALLOW_SUPERUSER: 1
+      COMPOSER_HOME: /composer
+    volumes:
+      - ${DRUPAL_HOST_PATH}:/workspace:delegated
+      - ${COMPOSER_CACHE_DIR:-./data/composer-cache}:/composer/cache
+      # (Optional) If you need private repos via SSH:
+      # - ${HOME}/.ssh:/home/composer/.ssh:ro
+    networks: [front, back]
 networks:
   front:
   back:
