@@ -1,0 +1,81 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-drupal}
+      MYSQL_USER: ${MYSQL_USER:-drupal}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - ${MYSQL_DATA_DIR:-./data/mysql}:/var/lib/mysql
+      - ./mysql/initdb.d:/docker-entrypoint-initdb.d:ro
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    networks: [back]
+
+  php81-apache:   # <— renamed to make intent explicit
+    build:
+      context: ./php81-apache
+      args:
+        APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024}
+    container_name: php81-apache
+    environment:
+      APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-miraweb.local}
+      APACHE_SERVER_ALIAS: ${APACHE_SERVER_ALIAS:-www.miraweb.local}
+      APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024}
+      SMTP_HOST: ${SMTP_HOST:-mail.sdccd.edu}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-""}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-""}
+      SMTP_TLS: ${SMTP_TLS:-on}
+    volumes:
+      - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
+      - ./php81-apache/apache-vhost.conf.template:/etc/apache2/sites-available/000-default.conf.template:ro
+      - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+    ports:
+      - "${APACHE_PORT:-8080}:80"
+    depends_on: [mysql, memcached]
+    networks: [front, back]
+
+  memcached:
+    image: memcached:1.6-alpine
+    container_name: memcached
+    command: ["-m", "128", "-I", "2m"]
+    ports:
+      - "${MEMCACHED_PORT:-11211}:11211"
+    networks: [back]
+
+  node:
+    build: ./node
+    container_name: node
+    working_dir: /workspace
+    volumes:
+      - ${DRUPAL_HOST_PATH}:/workspace:delegated
+    command: ["tail", "-f", "/dev/null"]
+    networks: [front, back]
+
+  solr:
+    image: solr:8.6.2
+    container_name: solr
+    environment:
+      SOLR_JAVA_MEM: "-Xms512m -Xmx512m"
+    volumes:
+      - ./solr:/var/solr/data:rw
+    ports:
+      - "${SOLR_PORT:-8983}:8983"
+    entrypoint:
+      - docker-entrypoint.sh
+      - solr-precreate
+      - drupal
+      - /var/solr/data/core
+    networks: [back]
+
+networks:
+  front:
+  back:
+
