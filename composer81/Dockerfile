@@ -1,17 +1,17 @@
+# ./composer81/Dockerfile
 FROM php:8.1-cli-bullseye
 
-# Tools Composer needs for typical Drupal workflows
+# Tools Composer needs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git unzip zip openssh-client ca-certificates \
-    libzip-dev libicu-dev libxml2-dev libonig-dev \
- && docker-php-ext-install zip intl mbstring \
- && rm -rf /var/lib/apt/lists/*
+      git unzip openssh-client ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
-# Install Composer (official installer)
-ENV COMPOSER_VERSION=2
-RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
- && php composer-setup.php --filename=composer --install-dir=/usr/local/bin \
- && rm composer-setup.php
+# Grab latest Composer binary from the official image
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
-# Non-root default user is set at runtime via docker-compose (user: HOST_UID:HOST_GID)
+# Defaults (compose overrides user/working_dir)
+ENV COMPOSER_ALLOW_SUPERUSER=1 \
+    COMPOSER_HOME=/composer
 
+WORKDIR /workspace
+ENTRYPOINT ["composer"]

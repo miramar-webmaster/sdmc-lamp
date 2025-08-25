@@ -34,13 +34,19 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-""}
       SMTP_TLS: ${SMTP_TLS:-on}
     volumes:
-      - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
-      - ./php81-apache/apache-vhost.conf.template:/etc/apache2/sites-available/000-default.conf.template:ro
+      - ${DRUPAL_HOST_PATH}:${APACHE_DOCROOT}:delegated
+      - ./php81-apache/000-default.conf:/etc/apache2/sites-available/000-default.conf.template:ro
+      - ./php81-apache/000-default-ssl.conf:/etc/apache2/sites-available/000-default-ssl.conf.template:ro
+      - ./php81-apache/apache-redirect.conf.template:/etc/apache2/sites-available/000-redirect.conf.template:ro
       - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+      - ./certs:/certs:ro
+#      - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
     ports:
-      - "${APACHE_PORT:-8080}:80"
-      - "${APACHE_BIND_IP:-0.0.0.0}:${APACHE_PORT:-80}:80"
-      - "${APACHE_BIND_IP:-0.0.0.0}:${APACHE_SSL_PORT:-443}:443"
+      - "${APACHE_PORT:-8081}:80"
+      - "${APACHE_SSL_PORT:-8444}:443"
+      #- "${APACHE_PORT:-8080}:80"
+      #- "${APACHE_BIND_IP:-0.0.0.0}:${APACHE_PORT:-80}:80"
+      #- "${APACHE_BIND_IP:-0.0.0.0}:${APACHE_SSL_PORT:-443}:443"
     depends_on: [mysql, memcached]
     networks: [front, back]
 
@@ -85,6 +91,7 @@ services:
       COMPOSER_MEMORY_LIMIT: -1
       COMPOSER_ALLOW_SUPERUSER: 1
       COMPOSER_HOME: /composer
+    entrypoint: ["composer"]
     volumes:
       - ${DRUPAL_HOST_PATH}:/workspace:delegated
       - ${COMPOSER_CACHE_DIR:-./data/composer-cache}:/composer/cache

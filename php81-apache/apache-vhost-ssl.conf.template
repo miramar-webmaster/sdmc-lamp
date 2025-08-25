@@ -1,0 +1,43 @@
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+    ServerName ${APACHE_SERVER_NAME}
+    ServerAlias ${APACHE_SERVER_ALIAS}
+    DocumentRoot ${APACHE_DOCROOT}
+
+    <Directory ${APACHE_DOCROOT}>
+        AllowOverride All
+        Require all granted
+        Options FollowSymLinks
+        DirectoryIndex index.php index.html
+    </Directory>
+
+    SSLEngine on
+    SSLCertificateFile      ${SSL_CERT_FILE}
+    SSLCertificateKeyFile   ${SSL_CERT_KEY_FILE}
+    # If your certificate is NOT a full chain, uncomment and set SSL_CHAIN_FILE in .env
+    # SSLCertificateChainFile ${SSL_CHAIN_FILE}
+
+    # TLS settings (modern)
+    SSLProtocol             all -SSLv3 -TLSv1 -TLSv1.1
+    SSLHonorCipherOrder     off
+    SSLCompression          off
+    SSLOpenSSLConfCmd Curves X25519:P-256:P-384
+    SSLCipherSuite          TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:!aNULL:!MD5:!3DES
+
+    # Security headers
+    Header always set X-Content-Type-Options "nosniff"
+    Header always append X-Frame-Options SAMEORIGIN
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # Enable HSTS after confirming HTTPS works and you control subdomains:
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+    # OCSP stapling (optional; your CA must support it)
+    SSLUseStapling On
+    SSLStaplingResponderTimeout 5
+    SSLStaplingReturnResponderErrors Off
+    SSLStaplingCache "shmcb:/var/run/ocsp(128000)"
+
+    ErrorLog ${APACHE_LOG_DIR}/error-ssl.log
+    CustomLog ${APACHE_LOG_DIR}/access-ssl.log combined
+</VirtualHost>
+</IfModule>
