@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+cd "$REPO_ROOT"
+
+SERVICE="${PHP_SERVICE:-php81-apache}"
+DOCROOT="${DRUPAL_CONTAINER_PATH:-/var/www/miraweb2024}"
+
+docker compose --project-directory "$REPO_ROOT" up -d "$SERVICE" >/dev/null
+exec docker compose --project-directory "$REPO_ROOT" \
+  exec -T "$SERVICE" bash -lc "cd '$DOCROOT' && php $*"

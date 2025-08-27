@@ -6,49 +6,45 @@ services:
     container_name: mysql
     command: ["--default-authentication-plugin=mysql_native_password"]
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-drupal}
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sdmc}
       MYSQL_USER: ${MYSQL_USER:-drupal}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_drupal_password
+      SDMC_ENV: ${SDMC_ENV:-dev}
     volumes:
       - ${MYSQL_DATA_DIR:-./data/mysql}:/var/lib/mysql
-      - ./mysql/initdb.d:/docker-entrypoint-initdb.d:ro
+      # Only keep these two if they actually exist on the host:
+      #- ./mysql/initdb.d:/docker-entrypoint-initdb.d:ro
       - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
     ports:
       - "${MYSQL_PORT:-3306}:3306"
+    secrets:
+      - mysql_root_password
+      - mysql_drupal_password
     networks: [back]
 
-  php81-apache:   # <— renamed to make intent explicit
+  php81-apache:
     build:
       context: ./php81-apache
-      args:
-        APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024}
     container_name: php81-apache
     environment:
       APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-miraweb.local}
       APACHE_SERVER_ALIAS: ${APACHE_SERVER_ALIAS:-www.miraweb.local}
       APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024}
-      SMTP_HOST: ${SMTP_HOST:-mail.sdccd.edu}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-""}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-""}
-      SMTP_TLS: ${SMTP_TLS:-on}
+      SSL_ENABLE: ${SSL_ENABLE:-1}
+      SSL_CERT_FILE: ${SSL_CERT_FILE:-/certs/dev.crt}
+      SSL_CERT_KEY_FILE: ${SSL_CERT_KEY_FILE:-/certs/dev.key}
+      SDMC_ENV: ${SDMC_ENV:-dev}
     volumes:
-      - ${DRUPAL_HOST_PATH}:${APACHE_DOCROOT}:delegated
-      - ./php81-apache/000-default.conf:/etc/apache2/sites-available/000-default.conf.template:ro
-      - ./php81-apache/000-default-ssl.conf:/etc/apache2/sites-available/000-default-ssl.conf.template:ro
-      - ./php81-apache/apache-redirect.conf.template:/etc/apache2/sites-available/000-redirect.conf.template:ro
+      - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
       - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
       - ./certs:/certs:ro
-#      - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
     ports:
       - "${APACHE_PORT:-8081}:80"
       - "${APACHE_SSL_PORT:-8444}:443"
-      #- "${APACHE_PORT:-8080}:80"
-      #- "${APACHE_BIND_IP:-0.0.0.0}:${APACHE_PORT:-80}:80"
-      #- "${APACHE_BIND_IP:-0.0.0.0}:${APACHE_SSL_PORT:-443}:443"
     depends_on: [mysql, memcached]
     networks: [front, back]
+
 
   memcached:
     image: memcached:1.6-alpine
@@ -101,4 +97,9 @@ services:
 networks:
   front:
   back:
+secrets:
+  mysql_root_password:
+    file: ${MYSQL_ROOT_PASSWORD_FILE_HOST}
+  mysql_drupal_password:
+    file: ${MYSQL_DRUPAL_PASSWORD_FILE_HOST}
 

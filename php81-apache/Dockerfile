@@ -37,12 +37,21 @@ COPY php.ini /usr/local/etc/php/conf.d/custom.ini
 # --- Copy final vhosts (no templating at runtime) ---
 # These two files must be present in php81-apache/ in your repo.
 # They should reference DocumentRoot /var/www/app and certs at /certs/dev.crt|dev.key
-COPY 000-default.conf /etc/apache2/sites-available/000-default.conf
+
+COPY php.ini /usr/local/etc/php/conf.d/custom.ini
+COPY 000-default.conf     /etc/apache2/sites-available/000-default.conf
 COPY 000-default-ssl.conf /etc/apache2/sites-available/000-default-ssl.conf
 
 # Ensure Apache listens on 443 and enable both sites
 RUN grep -q "^Listen 443" /etc/apache2/ports.conf || echo "Listen 443" >> /etc/apache2/ports.conf \
  && a2ensite 000-default 000-default-ssl
 
+ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh \
+ && a2ensite 000-default 000-default-ssl
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+
 # IMPORTANT: remove the custom entrypoint — we don't render templates anymore
-CMD ["apache2-foreground"]
+#CMD ["apache2-foreground"]
