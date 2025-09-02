@@ -24,18 +24,18 @@ services:
     networks: [back]
 
   php81-apache:
+    container_name: php81-apache
     build:
       context: ./php81-apache
-    container_name: php81-apache
     environment:
       APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-miraweb.local}
       APACHE_SERVER_ALIAS: ${APACHE_SERVER_ALIAS:-www.miraweb.local}
       APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024}
-      SSL_ENABLE: ${SSL_ENABLE:-1}
       SSL_CERT_FILE: ${SSL_CERT_FILE:-/certs/dev.crt}
       SSL_CERT_KEY_FILE: ${SSL_CERT_KEY_FILE:-/certs/dev.key}
       SDMC_ENV: ${SDMC_ENV:-dev}
     volumes:
+#      - ./php81-apache/passenv.conf:/etc/apache2/conf-enabled/00-passenv.conf:ro
       - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
       - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
       - ./certs:/certs:ro
@@ -44,7 +44,6 @@ services:
       - "${APACHE_SSL_PORT:-8444}:443"
     depends_on: [mysql, memcached]
     networks: [front, back]
-
 
   memcached:
     image: memcached:1.6-alpine

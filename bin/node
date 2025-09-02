@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# theme-node — run npm tasks for the sdmc theme inside a container, interactively or via args.
+# Supports:
+#   ./theme-node                # interactive menu
+#   ./theme-node install        # npm install
+#   ./theme-node rebuild        # npm rebuild node-sass
+#   ./theme-node build          # npm run build
+#   ./theme-node all            # install + rebuild + build
+#   ./theme-node ci             # npm ci (if lockfile) + npm run build
+#   ./theme-node run <script>   # npm run <script>
+#
+# Env knobs:
+#   NODE_SERVICE=node           # compose service to use (if you have one)
+#   USE_ONE_OFF=0|1             # 1 => use one-off docker run (no compose service)
+#   NODE_IMAGE=node:20-alpine   # image for one-off mode (try node:16-alpine if node-sass is picky)
+#   THEME_DIR=/var/www/miraweb2024/docroot/themes/custom/sdmc
+#   HOST_THEME_REL=miraweb2024/docroot/themes/custom/sdmc (path under $PWD for one-off mode)
+
+set -euo pipefail
+
+# ----- Config -----
+THEME_DIR="${THEME_DIR:-/var/www/miraweb2024/docroot/themes/custom/sdmc}"
+HOST_THEME_REL="${HOST_THEME_REL:-miraweb2024/docroot/themes/custom/sdmc}"
+
+NODE_SVC="${NODE_SERVICE:-node}"
+USE_ONE_OFF="${USE_ONE_OFF:-0}"
+NODE_IMAGE="${NODE_IMAGE:-node:20-alpine}"
+
+RUN_AS=(--user "$(id -u):$(id -g)")
+
+# ----- Container script (installs OS deps ONLY if root) -----
+_in_container_script() {
+  cat <<'SH'
+set -e
+
+# Install minimal build deps for node-gyp/node-sass ONLY if running as root
+if [ "$(id -u)" -eq 0 ]; then
+  if [ -f /etc/alpine-release ]; then
+    echo "Installing build deps (Alpine)..." >&2
+    apk add --no-cache python3 make g++ >/dev/null
+  elif command -v apt-get >/dev/null 2>&1; then
+    echo "Installing build deps (Debian/Ubuntu)..." >&2
+    apt-get update -y >/dev/null && apt-get install -y python3 make g++ >/dev/null
+  fi
+else
+  echo "NOTE: not root in container; skipping OS build deps." >&2
+  echo "      If node-sass fails to build, try:" >&2
+  echo "      USE_ONE_OFF=1 NODE_IMAGE=node:16-alpine ./theme-node all" >&2
+fi
+
+cd "$WORKDIR"
+eval "$NPM_SNIPPET"
+SH
+}
+
+run_compose() {
+  local snippet="$1"
+  WORKDIR="$THEME_DIR" NPM_SNIPPET="$snippet" \
+  docker compose run --rm -w "$THEME_DIR" "${RUN_AS[@]}" "$NODE_SVC" \
+    sh -lc "$(_in_container_script)"
+}
+
+run_oneoff() {
+  local snippet="$1"
+  local work="/work/${HOST_THEME_REL}"
+  WORKDIR="$work" NPM_SNIPPET="$snippet" \
+  docker run --rm -t -v "$PWD":/work -w "$work" "${RUN_AS[@]}" "$NODE_IMAGE" \
+    sh -lc "$(_in_container_script)"
+}
+
+run_cmd() {
+  local snippet="$1"
+  if [[ "$USE_ONE_OFF" == "1" ]]; then
+    run_oneoff "$snippet"
+  else
+    run_compose "$snippet"
+  fi
+}
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} [install|rebuild|build|all|ci|run <script>|help]
+
+No args => interactive menu.
+Env: NODE_SERVICE, USE_ONE_OFF=1, NODE_IMAGE, THEME_DIR, HOST_THEME_REL
+EOF
+}
+
+menu() {
+  echo "What do you want to run in $THEME_DIR?"
+  echo "  1) npm install"
+  echo "  2) npm rebuild node-sass"
+  echo "  3) npm run build"
+  echo "  4) install + rebuild + build"
+  echo "  5) npm ci + npm run build"
+  echo "  6) npm run <custom script>"
+  read -rp "Choose [1-6]: " c
+  case "$c" in
+    1) run_cmd 'npm install' ;;
+    2) run_cmd 'npm rebuild node-sass || true' ;;
+    3) run_cmd 'npm run build' ;;
+    4) run_cmd 'npm install && npm rebuild node-sass || true && npm run build' ;;
+    5) run_cmd '[ -f package-lock.json ] && npm ci || npm install; npm run build' ;;
+    6) read -rp "Script name (as in package.json): " s; run_cmd "npm run $(printf %q "$s")" ;;
+    *) echo "Invalid choice"; exit 1 ;;
+  esac
+}
+
+# ----- Main -----
+cmd="${1-}"
+case "$cmd" in
+  "" ) menu ;;
+  help|-h|--help) usage ;;
+  install) run_cmd 'npm install' ;;
+  rebuild) run_cmd 'npm rebuild node-sass || true' ;;
+  build)   run_cmd 'npm run build' ;;
+  all)     run_cmd 'npm install && npm rebuild node-sass || true && npm run build' ;;
+  ci)      run_cmd '[ -f package-lock.json ] && npm ci || npm install; npm run build' ;;
+  run)
+    shift || true
+    [[ $# -ge 1 ]] || { echo "Need a script name, e.g. ${0##*/} run dev"; exit 1; }
+    run_cmd "npm run $(printf %q "$*")"
+    ;;
+  *) echo "Unknown command: $cmd"; usage; exit 1 ;;
+esac
