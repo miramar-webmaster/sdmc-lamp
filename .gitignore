@@ -2,7 +2,7 @@
 .env
 *.env
 certs/*.key
-#certs/*.crt   # uncomment if you don’t want to commit CRTs either
+certs/*.crt 
 
 # Local data / caches / backups
 data/mysql/
@@ -12,7 +12,7 @@ db-backups/
 
 # Old/legacy Solr trees (index must NOT be in git)
 solr/
-data/              # if you previously had solr data here
+data/
 var/solr/
 
 # Keep configset, not index
