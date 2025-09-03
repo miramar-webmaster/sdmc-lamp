@@ -82,6 +82,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  composer:
+    image: php81-apache:latest   # <-- your built image tag
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /app
+    entrypoint: ["composer"]
+    environment:
+      COMPOSER_HOME: /tmp
+      COMPOSER_CACHE_DIR: /tmp/composer-cache
+    volumes:
+      - ${DRUPAL_HOST_PATH}:/app:rw
+      - ./data/composer-cache:/tmp/composer-cache
 networks:
   front:
   back:

@@ -8,6 +8,15 @@ RUN chmod +x /usr/local/bin/install-php-extensions \
       dom xml xmlreader xmlwriter mbstring curl shmop readline \
       imap imagick memcached
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl \
+  && update-ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN php -r "copy('https://getcomposer.org/installer','composer-setup.php');" \
+ && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+ && rm -f composer-setup.php
+
 RUN apt-get update && apt-get install -y gettext
 
 # Apache modules
