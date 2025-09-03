@@ -1,0 +1,14 @@
+# local env & secrets (stay untracked)
+.env
+*.env
+certs/*.key
+
+# local data/caches
+data/mysql/
+data/composer-cache/
+backups/
+db-backups/
+
+# ensure helper scripts stay tracked even if other patterns get broad
+!bin/
+!bin/**

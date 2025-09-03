@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# bin/node — run NPM tasks for the sdmc theme inside a container.
+# Mounts the project root so SCSS imports to ../../../../libraries resolve.
+# Examples:
+#   bin/node install
+#   bin/node build
+#   bin/node run dev
+#   bin/node --path /var/www/miraweb2024/docroot/themes/custom/sdmc all
+
+set -euo pipefail
+
+# ---- Config knobs (override via env) ----
+USE_ONE_OFF="${USE_ONE_OFF:-1}"                 # 1=docker run (default), 0=docker compose run
+NODE_IMAGE="${NODE_IMAGE:-node:16-alpine}"      # Node 16 is safest for node-sass; change if you need newer
+NODE_SERVICE="${NODE_SERVICE:-node}"            # compose service name when USE_ONE_OFF=0
+
+# ---- Args ----
+RUN_AS_ROOT=0
+THEME_PATH_ARG=""
+if [[ "${1-}" == "--root" ]]; then RUN_AS_ROOT=1; shift || true; fi
+if [[ "${1-}" == "--path" ]]; then
+  shift || true
+  [[ $# -ge 1 ]] || { echo "ERROR: --path requires absolute path"; exit 1; }
+  THEME_PATH_ARG="$1"; shift || true
+fi
+CMD="${1-}"; shift || true
+[[ -n "${CMD}" ]] || CMD="menu"
+
+# ---- Resolve theme absolute path (default to your theme) ----
+HOST_THEME_ABS="${HOST_THEME_ABS:-${THEME_PATH_ARG:-/var/www/miraweb2024/docroot/themes/custom/sdmc}}"
+[[ "${HOST_THEME_ABS}" == /* ]] || { echo "ERROR: theme path must be absolute"; exit 1; }
+[[ -d "$HOST_THEME_ABS" ]] || { echo "ERROR: theme dir not found: $HOST_THEME_ABS"; exit 1; }
+[[ -f "$HOST_THEME_ABS/package.json" ]] || { echo "ERROR: package.json missing in $HOST_THEME_ABS"; exit 1; }
+
+# Derive project root (/var/www/miraweb2024) from theme path (…/docroot/themes/custom/sdmc)
+up1="$(dirname "$HOST_THEME_ABS")"   # sdmc
+up2="$(dirname "$up1")"              # custom
+up3="$(dirname "$up2")"              # themes
+up4="$(dirname "$up3")"              # docroot
+HOST_ROOT_ABS="$(dirname "$up4")"    # /var/www/miraweb2024
+
+# Paths inside one-off container
+WORK_ROOT="/work-root"
+THEME_DIR_ONEOFF="$WORK_ROOT${HOST_THEME_ABS#$HOST_ROOT_ABS}"
+
+# Run as the host user so node_modules/files are owned by you
+RUN_AS_USER=(--user "$(id -u):$(id -g)")
+
+# ---- Build the command snippet that will run in the container ----
+_build_snippet() {
+  local action="$1"; shift || true
+  local install_cmd='[ -f package-lock.json ] && npm ci || npm install'
+  local rebuild_cmd='(grep -q "\"node-sass\"" package.json >/dev/null 2>&1 && npm rebuild node-sass || true)'
+
+  case "$action" in
+    install) echo "$install_cmd" ;;
+    rebuild) echo "$rebuild_cmd" ;;
+    build)   echo 'npm run build' ;;
+    dev)     echo 'npm run dev' ;;
+    run)     echo "npm run $1" ;;                 # $1 already shell-escaped by caller
+    all)     echo "$install_cmd && $rebuild_cmd && npm run build" ;;
+    ci)      echo '[ -f package-lock.json ] && npm ci || npm install; npm run build' ;;
+    npm)     echo "npm $1" ;;                     # raw npm passthrough
+    *)       echo "echo 'Unknown command' >&2; exit 1" ;;
+  esac
+}
+
+# ---- Script executed inside the container ----
+_inner_script() {
+  cat <<'SH'
+set -e
+cd "$WORKDIR"
+echo "==> Working dir: $WORKDIR"
+echo "==> Running: $NPM_SNIPPET"
+# Helpful include paths for SASS (docroot/libraries, theme/node_modules, repo-level node_modules)
+export SASS_PATH="${SASS_PATH:-}"
+eval "$NPM_SNIPPET"
+SH
+}
+
+# ---- One-off docker run mode ----
+_run_oneoff() {
+  local snippet="$1"
+  local -a user_args=()
+  [[ "$RUN_AS_ROOT" -eq 0 ]] && user_args=("${RUN_AS_USER[@]}")
+
+  # Allow @import to resolve from docroot/libraries and node_modules
+  local sass_path="${WORK_ROOT}/docroot/libraries:${THEME_DIR_ONEOFF}/node_modules:${WORK_ROOT}/node_modules"
+
+  WORKDIR="$THEME_DIR_ONEOFF" NPM_SNIPPET="$snippet" RUN_AS_ROOT="$RUN_AS_ROOT" \
+  SASS_PATH="$sass_path" \
+  docker run --rm -t \
+    -v "$HOST_ROOT_ABS":"$WORK_ROOT":Z \
+    -w "$THEME_DIR_ONEOFF" \
+    -e WORKDIR -e NPM_SNIPPET -e RUN_AS_ROOT -e SASS_PATH \
+    "${user_args[@]}" \
+    "$NODE_IMAGE" sh -lc "$(_inner_script)"
+}
+
+# ---- docker compose run mode ----
+_run_compose() {
+  local snippet="$1"
+  local -a user_args=()
+  [[ "$RUN_AS_ROOT" -eq 0 ]] && user_args=("${RUN_AS_USER[@]}")
+
+  local theme_compose="/var/www/miraweb2024/docroot/themes/custom/sdmc"
+  local sass_path="/var/www/miraweb2024/docroot/libraries:${theme_compose}/node_modules:/var/www/miraweb2024/node_modules"
+
+  WORKDIR="$theme_compose" NPM_SNIPPET="$snippet" RUN_AS_ROOT="$RUN_AS_ROOT" \
+  SASS_PATH="$sass_path" \
+  docker compose run --rm \
+    -w "$theme_compose" \
+    -e WORKDIR -e NPM_SNIPPET -e RUN_AS_ROOT -e SASS_PATH \
+    "${user_args[@]}" \
+    "$NODE_SERVICE" sh -lc "$(_inner_script)"
+}
+
+_run() {
+  local snippet="$1"
+  if [[ "$USE_ONE_OFF" -eq 1 ]]; then _run_oneoff "$snippet"; else _run_compose "$snippet"; fi
+}
+
+# ---- Fix permissions helper ----
+_fix_perms() {
+  docker run --rm -t \
+    -v "$HOST_ROOT_ABS":"$WORK_ROOT":Z \
+    -w "$THEME_DIR_ONEOFF" \
+    -e T_UID="$(id -u)" -e T_GID="$(id -g)" \
+    "$NODE_IMAGE" sh -lc '
+      chown -R "$T_UID:$T_GID" .
+      find . -type d -exec chmod 775 {} +
+      find . -type f -exec chmod 664 {} +
+      echo "Permissions fixed to ${T_UID}:${T_GID}"
+    '
+}
+
+# ---- UX ----
+_usage() {
+  cat <<EOF
+Usage: ${0##*/} [--root] [--path /abs/theme/dir] [install|rebuild|build|dev|all|ci|run <script>|npm <args...>|-- <args...>|fix-perms|menu]
+EOF
+}
+
+_menu() {
+  echo "${0##*/} — $HOST_THEME_ABS"
+  echo "  1) npm install (auto: ci if lockfile)"
+  echo "  2) npm rebuild node-sass"
+  echo "  3) npm run build"
+  echo "  4) install + rebuild + build"
+  echo "  5) npm ci + npm run build"
+  echo "  6) npm run <custom script>"
+  echo "  7) raw npm <args>"
+  echo "  8) fix permissions"
+  echo "  q) quit"
+  read -rp "Choose [1-8,q]: " c
+  case "$c" in
+    1) _run "$(_build_snippet install)" ;;
+    2) _run "$(_build_snippet rebuild)" ;;
+    3) _run "$(_build_snippet build)" ;;
+    4) _run "$(_build_snippet all)" ;;
+    5) _run "$(_build_snippet ci)" ;;
+    6) read -rp "Script name: " s; _run "$(_build_snippet run "$(printf %q "$s")")" ;;
+    7) read -rp "npm args: " a; _run "$(_build_snippet npm "$(printf %q "$a")")" ;;
+    8) _fix_perms ;;
+    q) exit 0 ;;
+    *) echo "Invalid choice"; exit 1 ;;
+  esac
+}
+
+# ---- Dispatch ----
+case "$CMD" in
+  menu|"") _menu ;;
+  help|-h|--help) _usage ;;
+  install|rebuild|build|dev|all|ci)
+    _run "$(_build_snippet "$CMD")" ;;
+  run)
+    [[ $# -ge 1 ]] || { echo "Usage: $0 run <script>"; exit 1; }
+    _run "$(_build_snippet run "$(printf %q "$*")")" ;;
+  npm)
+    [[ $# -ge 1 ]] || { echo "Usage: $0 npm <args...>"; exit 1; }
+    _run "$(_build_snippet npm "$(printf %q "$*")")" ;;
+  --)  # raw npm passthrough
+    [[ $# -ge 1 ]] || { echo "Usage: $0 -- <npm args...>"; exit 1; }
+    _run "$(_build_snippet npm "$(printf %q "$*")")" ;;
+  fix-perms)
+    _fix_perms ;;
+  *)
+    echo "Unknown command: ${CMD}"; _usage; exit 1 ;;
+esac

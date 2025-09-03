@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+cd "$REPO_ROOT"
+
+SERVICE="${DRUSH_SERVICE:-php81-apache}"
+DOCROOT="${DRUPAL_CONTAINER_PATH:-/var/www/miraweb2024}"
+
+# Ensure MySQL and the web service are up (no-op if already running)
+docker compose --project-directory "$REPO_ROOT" up -d mysql "$SERVICE" >/dev/null
+
+# Now exec drush inside the running web container
+exec docker compose --project-directory "$REPO_ROOT" \
+  exec -T -u "${HOST_UID:-1000}:${HOST_GID:-1000}" \
+  "$SERVICE" bash -lc "cd '$DOCROOT' && ./vendor/bin/drush $*"

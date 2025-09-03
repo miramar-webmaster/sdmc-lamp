@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# Resolve repo root (bin/..)
+REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+cd "$REPO_ROOT"
+
+# Run the dedicated composer service (one-off)
+exec docker compose \
+  --project-directory "$REPO_ROOT" \
+  run --rm composer "$@"

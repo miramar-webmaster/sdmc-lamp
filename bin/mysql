@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+cd "$REPO_ROOT"
+
+DB="${MYSQL_DATABASE:-sdmc}"
+USER="${MYSQL_USER:-drupal}"
+
+docker compose --project-directory "$REPO_ROOT" up -d mysql >/dev/null
+exec docker compose --project-directory "$REPO_ROOT" \
+  exec -T mysql bash -lc 'MYSQL_PWD="$(cat ${MYSQL_ROOT_PASSWORD_FILE:-/run/secrets/mysql_root_password} 2>/dev/null || echo)" mysql -uroot '"$DB"' '"$*"
