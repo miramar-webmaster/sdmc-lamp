@@ -31,9 +31,12 @@ services:
       APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-miraweb.local}
       APACHE_SERVER_ALIAS: ${APACHE_SERVER_ALIAS:-www.miraweb.local}
       APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024}
-      SSL_CERT_FILE: ${SSL_CERT_FILE:-/certs/dev.crt}
-      SSL_CERT_KEY_FILE: ${SSL_CERT_KEY_FILE:-/certs/dev.key}
       SDMC_ENV: ${SDMC_ENV:-dev}
+
+      SSL_ENABLE:          ${SSL_ENABLE:-1}
+      SSL_CERT_FILE:       ${SSL_CERT_FILE:-/certs/dev.crt}
+      SSL_CERT_KEY_FILE:   ${SSL_CERT_KEY_FILE:-/certs/dev.key}
+#      SSL_CHAIN_FILE:      ${SSL_CHAIN_FILE:-}
     volumes:
 #      - ./php81-apache/passenv.conf:/etc/apache2/conf-enabled/00-passenv.conf:ro
       - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
@@ -68,34 +71,22 @@ services:
     environment:
       SOLR_JAVA_MEM: "-Xms512m -Xmx512m"
     volumes:
-      - ./solr:/var/solr/data:rw
+      - solr-data:/var/solr                  
+      - ./solr-config/sdmc:/solr-config:ro 
+    command: ["solr-precreate", "sdmc", "/solr-config"]
     ports:
       - "${SOLR_PORT:-8983}:8983"
-    entrypoint:
-      - docker-entrypoint.sh
-      - solr-precreate
-      - drupal
-      - /var/solr/data/core
     networks: [back]
-  composer:
-    build: ./composer81
-    container_name: composer81
-    working_dir: /workspace
-    user: "${HOST_UID}:${HOST_GID}"
-    environment:
-      COMPOSER_MEMORY_LIMIT: -1
-      COMPOSER_ALLOW_SUPERUSER: 1
-      COMPOSER_HOME: /composer
-    entrypoint: ["composer"]
-    volumes:
-      - ${DRUPAL_HOST_PATH}:/workspace:delegated
-      - ${COMPOSER_CACHE_DIR:-./data/composer-cache}:/composer/cache
-      # (Optional) If you need private repos via SSH:
-      # - ${HOME}/.ssh:/home/composer/.ssh:ro
-    networks: [front, back]
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "wget -qO- 'http://localhost:8983/solr/drupal/admin/ping?wt=json' | grep -q '\"status\":\"OK\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 networks:
   front:
   back:
+volumes:
+  solr-data:
 secrets:
   mysql_root_password:
     file: ${MYSQL_ROOT_PASSWORD_FILE_HOST}

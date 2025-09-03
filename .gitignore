@@ -1,26 +1,26 @@
-# Never commit secrets
+# Env & secrets
 .env
+*.env
+certs/*.key
+#certs/*.crt   # uncomment if you don’t want to commit CRTs either
 
-# MySQL & other runtime data (keep the folders, ignore contents)
-data/*
-!data/.gitkeep
-data/mysql/*
-!data/mysql/.gitkeep
-data/composer-cache/*
-!data/composer-cache/.gitkeep
+# Local data / caches / backups
+data/mysql/
+data/composer-cache/
+backups/
+db-backups/
 
-# Optional certs (prod LE lives on host; dev self-signed may live here)
-certs/*
-!certs/.gitkeep
+# Old/legacy Solr trees (index must NOT be in git)
+solr/
+data/              # if you previously had solr data here
+var/solr/
 
-# Solr core data if you store it here (usually large & generated)
-solr/core/*
-!solr/core/.gitkeep
+# Keep configset, not index
+solr-config/**/data/
+solr-config/**/core.properties
 
-# Logs
-*.log
-
-# OS/editor noise
+# OS/editor
 .DS_Store
-Thumbs.db
-
+*.swp
+.idea/
+.vscode/
