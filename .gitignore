@@ -1,14 +1,26 @@
-# local env & secrets (stay untracked)
+# Env & secrets
 .env
 *.env
 certs/*.key
+certs/*.crt 
 
-# local data/caches
+# Local data / caches / backups
 data/mysql/
 data/composer-cache/
 backups/
 db-backups/
 
-# ensure helper scripts stay tracked even if other patterns get broad
-!bin/
-!bin/**
+# Old/legacy Solr trees (index must NOT be in git)
+solr/
+data/
+var/solr/
+
+# Keep configset, not index
+solr-config/**/data/
+solr-config/**/core.properties
+
+# OS/editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

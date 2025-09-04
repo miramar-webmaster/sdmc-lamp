@@ -1,71 +1,85 @@
 #!/usr/bin/env bash
-# bin/node — run NPM tasks for the sdmc theme inside a container.
-# Mounts the project root so SCSS imports to ../../../../libraries resolve.
-# Examples:
-#   bin/node install
-#   bin/node build
-#   bin/node run dev
-#   bin/node --path /var/www/miraweb2024/docroot/themes/custom/sdmc all
+# node — run NPM tasks for the sdmc Drupal theme from the HOST path, inside a container.
+# Works with absolute host path: /var/www/miraweb2024/docroot/themes/custom/sdmc
+# Mounts the project root (/var/www/miraweb2024) so relative SCSS imports to ../../../../libraries/... work.
 
 set -euo pipefail
 
-# ---- Config knobs (override via env) ----
-USE_ONE_OFF="${USE_ONE_OFF:-1}"                 # 1=docker run (default), 0=docker compose run
-NODE_IMAGE="${NODE_IMAGE:-node:16-alpine}"      # Node 16 is safest for node-sass; change if you need newer
-NODE_SERVICE="${NODE_SERVICE:-node}"            # compose service name when USE_ONE_OFF=0
+# ---------- Config (overrides) ----------
+USE_ONE_OFF="${USE_ONE_OFF:-1}"                 # 1 = docker run (default), 0 = docker compose run
+NODE_IMAGE="${NODE_IMAGE:-node:16-alpine}"      # Node 16 is safest for node-sass
+NODE_SERVICE="${NODE_SERVICE:-node}"            # compose service name if USE_ONE_OFF=0
 
-# ---- Args ----
+# Theme path on HOST. Prefer:
+#   1) --path /abs/path
+#   2) HOST_THEME_ABS env
+#   3) default: /var/www/miraweb2024/docroot/themes/custom/sdmc
+HOST_THEME_ABS_DEFAULT="/var/www/miraweb2024/docroot/themes/custom/sdmc"
+
+# Compose in-container path to the theme (only used when USE_ONE_OFF=0)
+THEME_DIR_COMPOSE="${THEME_DIR_COMPOSE:-/var/www/miraweb2024/docroot/themes/custom/sdmc}"
+
+# ---------- Args ----------
 RUN_AS_ROOT=0
 THEME_PATH_ARG=""
 if [[ "${1-}" == "--root" ]]; then RUN_AS_ROOT=1; shift || true; fi
 if [[ "${1-}" == "--path" ]]; then
   shift || true
-  [[ $# -ge 1 ]] || { echo "ERROR: --path requires absolute path"; exit 1; }
+  [[ $# -ge 1 ]] || { echo "ERROR: --path requires an absolute path"; exit 1; }
   THEME_PATH_ARG="$1"; shift || true
 fi
 CMD="${1-}"; shift || true
 [[ -n "${CMD}" ]] || CMD="menu"
 
-# ---- Resolve theme absolute path (default to your theme) ----
-HOST_THEME_ABS="${HOST_THEME_ABS:-${THEME_PATH_ARG:-/var/www/miraweb2024/docroot/themes/custom/sdmc}}"
-[[ "${HOST_THEME_ABS}" == /* ]] || { echo "ERROR: theme path must be absolute"; exit 1; }
-[[ -d "$HOST_THEME_ABS" ]] || { echo "ERROR: theme dir not found: $HOST_THEME_ABS"; exit 1; }
+# ---------- Resolve absolute theme path on host ----------
+if [[ -n "${THEME_PATH_ARG}" ]]; then
+  HOST_THEME_ABS="$THEME_PATH_ARG"
+elif [[ -n "${HOST_THEME_ABS:-}" ]]; then
+  : # use env
+else
+  HOST_THEME_ABS="$HOST_THEME_ABS_DEFAULT"
+fi
+[[ "${HOST_THEME_ABS}" == /* ]] || { echo "ERROR: Theme path must be absolute: ${HOST_THEME_ABS}"; exit 1; }
+[[ -d "$HOST_THEME_ABS" ]] || { echo "ERROR: Theme dir not found: $HOST_THEME_ABS"; exit 1; }
 [[ -f "$HOST_THEME_ABS/package.json" ]] || { echo "ERROR: package.json missing in $HOST_THEME_ABS"; exit 1; }
 
-# Derive project root (/var/www/miraweb2024) from theme path (…/docroot/themes/custom/sdmc)
-up1="$(dirname "$HOST_THEME_ABS")"   # sdmc
-up2="$(dirname "$up1")"              # custom
-up3="$(dirname "$up2")"              # themes
-up4="$(dirname "$up3")"              # docroot
-HOST_ROOT_ABS="$(dirname "$up4")"    # /var/www/miraweb2024
+# ---------- Derive project root (/var/www/miraweb2024) from theme path ----------
+up1="$(dirname "$HOST_THEME_ABS")"              # .../sdmc
+up2="$(dirname "$up1")"                         # .../custom
+up3="$(dirname "$up2")"                         # .../themes
+up4="$(dirname "$up3")"                         # .../docroot
+HOST_ROOT_ABS="$(dirname "$up4")"               # /var/www/miraweb2024
 
-# Paths inside one-off container
-WORK_ROOT="/work-root"
-THEME_DIR_ONEOFF="$WORK_ROOT${HOST_THEME_ABS#$HOST_ROOT_ABS}"
+# Validate we can see docroot/libraries from root (not strictly required, but helpful)
+if [[ ! -d "$HOST_ROOT_ABS/docroot" ]]; then
+  echo "WARN: Expected docroot at $HOST_ROOT_ABS/docroot not found." >&2
+fi
 
-# Run as the host user so node_modules/files are owned by you
+# Paths inside container when using one-off docker run
+WORK_ROOT="/work-root"                                                   # mounts HOST_ROOT_ABS here
+THEME_DIR_ONEOFF="$WORK_ROOT${HOST_THEME_ABS#$HOST_ROOT_ABS}"            # e.g. /work-root/docroot/themes/custom/sdmc
+
 RUN_AS_USER=(--user "$(id -u):$(id -g)")
 
-# ---- Build the command snippet that will run in the container ----
+# Build the inner npm snippet
 _build_snippet() {
   local action="$1"; shift || true
   local install_cmd='[ -f package-lock.json ] && npm ci || npm install'
   local rebuild_cmd='(grep -q "\"node-sass\"" package.json >/dev/null 2>&1 && npm rebuild node-sass || true)'
-
   case "$action" in
     install) echo "$install_cmd" ;;
     rebuild) echo "$rebuild_cmd" ;;
     build)   echo 'npm run build' ;;
     dev)     echo 'npm run dev' ;;
-    run)     echo "npm run $1" ;;                 # $1 already shell-escaped by caller
+    run)     echo "npm run $1" ;;                     # $1 already shell-escaped
     all)     echo "$install_cmd && $rebuild_cmd && npm run build" ;;
     ci)      echo '[ -f package-lock.json ] && npm ci || npm install; npm run build' ;;
-    npm)     echo "npm $1" ;;                     # raw npm passthrough
+    npm)     echo "npm $1" ;;                         # raw npm passthrough
     *)       echo "echo 'Unknown command' >&2; exit 1" ;;
   esac
 }
 
-# ---- Script executed inside the container ----
+# Script executed inside the container
 _inner_script() {
   cat <<'SH'
 set -e
@@ -78,13 +92,13 @@ eval "$NPM_SNIPPET"
 SH
 }
 
-# ---- One-off docker run mode ----
+# One-off (docker run)
 _run_oneoff() {
   local snippet="$1"
   local -a user_args=()
   [[ "$RUN_AS_ROOT" -eq 0 ]] && user_args=("${RUN_AS_USER[@]}")
 
-  # Allow @import to resolve from docroot/libraries and node_modules
+  # SASS_PATH: allow @import to resolve from docroot/libraries and node_modules
   local sass_path="${WORK_ROOT}/docroot/libraries:${THEME_DIR_ONEOFF}/node_modules:${WORK_ROOT}/node_modules"
 
   WORKDIR="$THEME_DIR_ONEOFF" NPM_SNIPPET="$snippet" RUN_AS_ROOT="$RUN_AS_ROOT" \
@@ -97,19 +111,20 @@ _run_oneoff() {
     "$NODE_IMAGE" sh -lc "$(_inner_script)"
 }
 
-# ---- docker compose run mode ----
+# Compose (docker compose run)
 _run_compose() {
   local snippet="$1"
   local -a user_args=()
   [[ "$RUN_AS_ROOT" -eq 0 ]] && user_args=("${RUN_AS_USER[@]}")
 
-  local theme_compose="/var/www/miraweb2024/docroot/themes/custom/sdmc"
-  local sass_path="/var/www/miraweb2024/docroot/libraries:${theme_compose}/node_modules:/var/www/miraweb2024/node_modules"
+  # For compose mode your service must mount /var/www/miraweb2024 into the container
+  # and THEME_DIR_COMPOSE must point to the theme path inside that mount.
+  local sass_path="$(dirname "$(dirname "$(dirname "$(dirname "$THEME_DIR_COMPOSE")")")")/docroot/libraries:${THEME_DIR_COMPOSE}/node_modules:/var/www/miraweb2024/node_modules"
 
-  WORKDIR="$theme_compose" NPM_SNIPPET="$snippet" RUN_AS_ROOT="$RUN_AS_ROOT" \
+  WORKDIR="$THEME_DIR_COMPOSE" NPM_SNIPPET="$snippet" RUN_AS_ROOT="$RUN_AS_ROOT" \
   SASS_PATH="$sass_path" \
   docker compose run --rm \
-    -w "$theme_compose" \
+    -w "$THEME_DIR_COMPOSE" \
     -e WORKDIR -e NPM_SNIPPET -e RUN_AS_ROOT -e SASS_PATH \
     "${user_args[@]}" \
     "$NODE_SERVICE" sh -lc "$(_inner_script)"
@@ -120,7 +135,7 @@ _run() {
   if [[ "$USE_ONE_OFF" -eq 1 ]]; then _run_oneoff "$snippet"; else _run_compose "$snippet"; fi
 }
 
-# ---- Fix permissions helper ----
+# Fix permissions helper
 _fix_perms() {
   docker run --rm -t \
     -v "$HOST_ROOT_ABS":"$WORK_ROOT":Z \
@@ -134,10 +149,23 @@ _fix_perms() {
     '
 }
 
-# ---- UX ----
+# UI
 _usage() {
   cat <<EOF
 Usage: ${0##*/} [--root] [--path /abs/theme/dir] [install|rebuild|build|dev|all|ci|run <script>|npm <args...>|-- <args...>|fix-perms|menu]
+Theme (host): $HOST_THEME_ABS
+Project root (host): $HOST_ROOT_ABS
+Examples:
+  ${0##*/} --path /var/www/miraweb2024/docroot/themes/custom/sdmc all
+  ${0##*/} build
+  ${0##*/} run dev
+  ${0##*/} npm outdated
+  ${0##*/} -- audit fix
+  ${0##*/} fix-perms
+Env overrides:
+  HOST_THEME_ABS=/abs/path/to/theme
+  USE_ONE_OFF=0 NODE_SERVICE=node THEME_DIR_COMPOSE=/var/www/...   (compose mode; ensure repo is mounted)
+  NODE_IMAGE=node:20-alpine                                        (modern toolchains)
 EOF
 }
 
@@ -146,11 +174,11 @@ _menu() {
   echo "  1) npm install (auto: ci if lockfile)"
   echo "  2) npm rebuild node-sass"
   echo "  3) npm run build"
-  echo "  4) install + rebuild + build"
+  echo "  4) install + rebuild + build   [ALL]"
   echo "  5) npm ci + npm run build"
   echo "  6) npm run <custom script>"
-  echo "  7) raw npm <args>"
-  echo "  8) fix permissions"
+  echo "  7) raw npm <args> (passthrough)"
+  echo "  8) fix permissions (chown to current user)"
   echo "  q) quit"
   read -rp "Choose [1-8,q]: " c
   case "$c" in
@@ -167,7 +195,7 @@ _menu() {
   esac
 }
 
-# ---- Dispatch ----
+# Dispatch
 case "$CMD" in
   menu|"") _menu ;;
   help|-h|--help) _usage ;;
@@ -179,11 +207,10 @@ case "$CMD" in
   npm)
     [[ $# -ge 1 ]] || { echo "Usage: $0 npm <args...>"; exit 1; }
     _run "$(_build_snippet npm "$(printf %q "$*")")" ;;
-  --)  # raw npm passthrough
+  --) # shorthand for raw npm
     [[ $# -ge 1 ]] || { echo "Usage: $0 -- <npm args...>"; exit 1; }
     _run "$(_build_snippet npm "$(printf %q "$*")")" ;;
-  fix-perms)
-    _fix_perms ;;
+  fix-perms) _fix_perms ;;
   *)
     echo "Unknown command: ${CMD}"; _usage; exit 1 ;;
 esac
