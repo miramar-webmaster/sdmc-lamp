@@ -16,17 +16,17 @@ Getting Started
    - git
    - curl
    - vim (or your favorite text editor)
-Installing
-Clone this project to ~/Desktop.
-Any modifications needed to be made to files/folders
-Executing program
-How to run the program
-Step-by-step bullets
-code blocks for commands
-Help
-Any advise for common problems or issues.
 
-command to run if program contains helper info
+**Installing**
+1. Clone this project to ~/Desktop.
+2. From project root, run ./install.sh
+3. Enter MySQL passwords and environment vaeriable when prompted to do so.
+
+Usage
+-----
+1. Verify container settings (see attached instructions).
+2. From project root, run `docker compose up -d` to start the containers.
+3. Access the Drupal site at http://dev.loc (or your chosen hostname).
 Authors
 *William Smith
 *Joseph Carlietello
