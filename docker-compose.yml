@@ -79,7 +79,7 @@ services:
       - "${SOLR_PORT:-8983}:8983"
     networks: [back]
     healthcheck:
-      test: ["CMD", "bash", "-lc", "wget -qO- 'http://localhost:8983/solr/drupal/admin/ping?wt=json' | grep -q '\"status\":\"OK\"'"]
+      test: ["CMD", "bash", "-lc", "wget -qO- 'http://localhost:8983/solr/sdmc/admin/ping?wt=json' | grep -q '\"status\":\"OK\"'"]
       interval: 10s
       timeout: 5s
       retries: 10
