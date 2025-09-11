@@ -1,42 +1,10 @@
 #!/usr/bin/env bash
-# bin/composer — run Composer inside php81-apache with explicit CA bundle and writable cache.
-
 set -euo pipefail
 [[ -f .env ]] && { set -a; . ./.env; set +a; }
 
-PHP_SERVICE="${PHP_SERVICE:-php81-apache}"
-DRUPAL_CONTAINER_PATH="${DRUPAL_CONTAINER_PATH:-/var/www/miraweb2024}"
-HOST_PATH="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"
-HOST_UID="${HOST_UID:-$(id -u)}"
-HOST_GID="${HOST_GID:-$(id -g)}"
+: "${PHP_SERVICE:=php81-apache}"
+: "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
 
-CABUNDLE="/etc/ssl/certs/ca-certificates.crt"
-COMPOSER_BIN="/usr/local/bin/composer"
+exec docker compose exec -T -w "$DRUPAL_CONTAINER_PATH" \
+  "$PHP_SERVICE" composer --ansi "$@"
 
-run_in_php() {
-  docker compose exec -T \
-    -u "${HOST_UID}:${HOST_GID}" \
-    -w "$DRUPAL_CONTAINER_PATH" \
-    -e COMPOSER_HOME=/tmp \
-    -e COMPOSER_CACHE_DIR=/tmp/composer-cache \
-    "$PHP_SERVICE" \
-    php -d "openssl.cafile=${CABUNDLE}" -d "curl.cainfo=${CABUNDLE}" \
-        "$COMPOSER_BIN" "$@"
-}
-
-# Composer present?
-if docker compose exec -T -w "$DRUPAL_CONTAINER_PATH" "$PHP_SERVICE" sh -lc "test -x '$COMPOSER_BIN'"; then
-  run_in_php "$@"; exit $?
-fi
-
-# Install it (via curl) if missing
-docker compose exec -T -w "$DRUPAL_CONTAINER_PATH" "$PHP_SERVICE" sh -lc '
-  set -e
-  command -v curl >/dev/null 2>&1 || { echo "curl missing in container"; exit 1; }
-  tmp="$(mktemp -d)"; trap "rm -rf \"$tmp\"" EXIT
-  curl -fsSL https://getcomposer.org/installer -o "$tmp/installer.php"
-  php "$tmp/installer.php" --install-dir=/usr/local/bin --filename=composer
-  composer --version
-'
-
-run_in_php "$@"

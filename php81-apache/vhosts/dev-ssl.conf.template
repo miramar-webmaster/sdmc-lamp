@@ -1,0 +1,19 @@
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+    ServerName ${APACHE_SERVER_NAME}
+    ServerAlias ${APACHE_SERVER_ALIAS}
+    DocumentRoot ${APACHE_DOCROOT}
+    SetEnv SDMC_ENV ${SDMC_ENV}
+  <Directory ${APACHE_DOCROOT}>
+    AllowOverride All
+    Require all granted
+    Options FollowSymLinks
+    DirectoryIndex index.php index.html
+  </Directory>
+  SSLEngine on
+  SSLCertificateFile ${SSL_CERT_FILE}
+  SSLCertificateKeyFile ${SSL_CERT_KEY_FILE}
+  ErrorLog ${APACHE_LOG_DIR}/error-ssl.log
+  CustomLog ${APACHE_LOG_DIR}/access-ssl.log combined
+</VirtualHost>
+</IfModule>

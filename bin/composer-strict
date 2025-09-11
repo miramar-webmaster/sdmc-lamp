@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# bin/composer — container-only, heredoc-fed (no fallbacks)
+set -euo pipefail
+
+# Load .env + helpers
+[[ -f .env ]] && { set -a; . ./.env; set +a; }
+HELPERS="$(cd "$(dirname "$0")" && pwd)/_docker_helpers.sh"
+[[ -f "$HELPERS" ]] || { echo "FATAL: missing $HELPERS"; exit 1; }
+# shellcheck source=/dev/null
+. "$HELPERS"
+
+: "${PHP_SERVICE:=php81-apache}"
+: "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
+: "${REQUIRED_PHP:=8.1}"   # set empty in .env to disable strict PHP check
+
+# Ensure PHP service is up so we never “fallback”
+dc up -d "$PHP_SERVICE" >/dev/null
+
+# 1) Install composer inside the container if needed (bash + heredoc)
+run_in_php bash -s <<'BASH'
+set -euo pipefail
+if ! command -v composer >/dev/null 2>&1; then
+  php -r 'copy("https://getcomposer.org/installer","composer-setup.php");'
+  php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+  rm -f composer-setup.php
+fi
+BASH
+
+# 2) Guardrails: PHP major.minor match and ext-gd present
+run_in_php bash -s <<'BASH'
+set -euo pipefail
+req="${REQUIRED_PHP:-}"
+if [[ -n "$req" ]]; then
+  php_mm="$(php -r 'echo PHP_MAJOR_VERSION,".",PHP_MINOR_VERSION;')"
+  if [[ "$php_mm" != "$req" ]]; then
+    echo "FATAL: container PHP ${php_mm} != REQUIRED_PHP ${req}" >&2
+    exit 1
+  fi
+fi
+php -m | grep -qi '^gd$' || {
+  echo "FATAL: ext-gd not loaded in container. Fix Dockerfile (install-php-extensions gd) and rebuild." >&2
+  exit 1
+}
+BASH
+
+# 3) Run composer inside the container (always)
+run_in_php env \
+  COMPOSER_HOME=/tmp \
+  COMPOSER_CACHE_DIR=/tmp/composer-cache \
+  CLICOLOR_FORCE=1 \
+  composer --ansi "$@"
+

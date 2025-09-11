@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-cd "$REPO_ROOT"
+# bin/drush — run project Drush inside the PHP container, from the repo docroot.
+set -euo pipefail
 
-SERVICE="${DRUSH_SERVICE:-php81-apache}"
-DOCROOT="${DRUPAL_CONTAINER_PATH:-/var/www/miraweb2024}"
+# Load env (optional)
+[[ -f .env ]] && { set -a; . ./.env; set +a; }
 
-# Ensure MySQL and the web service are up (no-op if already running)
-docker compose --project-directory "$REPO_ROOT" up -d mysql "$SERVICE" >/dev/null
+# Defaults; DRUSH_SERVICE can override which service to exec into
+: "${PHP_SERVICE:=php81-apache}"
+: "${DRUSH_SERVICE:=${PHP_SERVICE}}"
+: "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
 
-# Now exec drush inside the running web container
-exec docker compose --project-directory "$REPO_ROOT" \
-  exec -T -u "${HOST_UID:-1000}:${HOST_GID:-1000}" \
-  "$SERVICE" bash -lc "cd '$DOCROOT' && ./vendor/bin/drush $*"
+# Prefer matching your host UID/GID so generated files aren't root-owned
+: "${HOST_UID:=$(id -u)}"
+: "${HOST_GID:=$(id -g)}"
+
+# Make sure the DB and web container are up (no-op if already running)
+docker compose up -d mysql "${DRUSH_SERVICE}" >/dev/null
+
+# Execute Drush from the project (composer-installed) binary
+exec docker compose exec -T \
+  -u "${HOST_UID}:${HOST_GID}" \
+  -w "${DRUPAL_CONTAINER_PATH}" \
+  "${DRUSH_SERVICE}" ./vendor/bin/drush "$@"
+
