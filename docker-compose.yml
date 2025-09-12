@@ -1,18 +1,12 @@
-<<<<<<< HEAD
-version: "3.9"
-=======
+
 # Docker Compose file for SDMC LAMP stack and website
->>>>>>> 68f94d3 (WIP: salvage from broken repo)
 
 services:
   mysql:
     image: mysql:8.0
     container_name: mysql
     command: ["--default-authentication-plugin=mysql_native_password"]
-<<<<<<< HEAD
-=======
     user: "0:0"
->>>>>>> 68f94d3 (WIP: salvage from broken repo)
     environment:
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
       MYSQL_DATABASE: ${MYSQL_DATABASE:-sdmc}
@@ -21,11 +15,6 @@ services:
       SDMC_ENV: ${SDMC_ENV:-dev}
     volumes:
       - ${MYSQL_DATA_DIR:-./data/mysql}:/var/lib/mysql
-<<<<<<< HEAD
-      # Only keep these two if they actually exist on the host:
-      #- ./mysql/initdb.d:/docker-entrypoint-initdb.d:ro
-=======
->>>>>>> 68f94d3 (WIP: salvage from broken repo)
       - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
     ports:
       - "${MYSQL_PORT:-3306}:3306"
@@ -51,7 +40,6 @@ services:
       - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
       - ./php81-apache/vhosts/dev.conf.template:/etc/apache2/sites-available/dev.conf:ro
       - ./php81-apache/vhosts/dev-ssl.conf.template:/etc/apache2/sites-available/dev-ssl.conf:ro
->>>>>>> 68f94d3 (WIP: salvage from broken repo)
       - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
       - ./certs:/certs:ro
     ports:
@@ -60,10 +48,6 @@ services:
     depends_on: [mysql, memcached]
     networks: [front, back]
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 68f94d3 (WIP: salvage from broken repo)
   memcached:
     image: memcached:1.6-alpine
     container_name: memcached
