@@ -1,54 +1,58 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-# Helpful debug
-echo "[entrypoint] APACHE_SERVER_NAME=${APACHE_SERVER_NAME:-}"
-echo "[entrypoint] APACHE_SERVER_ALIAS=${APACHE_SERVER_ALIAS:-}"
-echo "[entrypoint] APACHE_DOCROOT=${APACHE_DOCROOT:-/var/www/miraweb2024/docroot}"
-echo "[entrypoint] SDMC_ENV=${SDMC_ENV:-}"
-echo "[entrypoint] SSL_ENABLE=${SSL_ENABLE:-0}"
+log(){ printf "[entrypoint] %s\n" "$*"; }
+die(){ echo "[entrypoint:ERROR] $*" >&2; exit 1; }
 
-# Ensure docroot exists (avoid Apache start failure)
-DOCROOT="${APACHE_DOCROOT:-/var/www/miraweb2024/docroot}"
-if [[ ! -d "$DOCROOT" ]]; then
-  echo "[entrypoint] ERROR: APACHE_DOCROOT not found: $DOCROOT" >&2
-  ls -la "$(dirname "$DOCROOT")" || true
-  exit 1
+# Show critical envs (for quick debugging)
+log "APACHE_SERVER_NAME=${APACHE_SERVER_NAME:-}"
+log "APACHE_SERVER_ALIAS=${APACHE_SERVER_ALIAS:-}"
+log "APACHE_DOCROOT=${APACHE_DOCROOT:-/var/www/miraweb2024/docroot}"
+log "SDMC_ENV=${SDMC_ENV:-dev}"
+log "SSL_ENABLE=${SSL_ENABLE:-0}"
+
+# Ensure a global ServerName so Apache doesn’t complain
+printf "ServerName %s\n" "${APACHE_SERVER_NAME:-dev.loc}" \
+  > /etc/apache2/conf-available/servername.conf
+a2enconf servername >/dev/null 2>&1 || true
+
+# Basic sanity
+command -v envsubst >/dev/null || die "envsubst not found (gettext missing)."
+[ -d /etc/apache2/sites-available ] || die "Apache sites-available missing."
+
+# Guard against read-only /etc (helps diagnose compose misconfig)
+if ! touch /etc/apache2/.rwtest 2>/dev/null; then
+  die "/etc/apache2 is not writable (read-only FS). Remove any 'read_only: true' or RO bind mounts to /etc in compose."
 fi
+rm -f /etc/apache2/.rwtest || true
 
-# Render vhosts from templates (requires gettext's envsubst)
-render_site() {
-  local tmpl="$1" out="$2"
-  if [[ -f "$tmpl" ]]; then
-    envsubst < "$tmpl" > "$out"
-    echo "[entrypoint] rendered $(basename "$out")"
-    a2ensite "$(basename "$out")" >/dev/null
-  else
-    echo "[entrypoint] WARN: template not found: $tmpl"
-  fi
+# Render vhosts from templates using current env
+render() {
+  local tpl="$1" out="$2"
+  [ -f "$tpl" ] || die "Template not found: $tpl"
+  envsubst <"$tpl" >"$out".tmp
+  mv -f "$out".tmp "$out"
+  log "Rendered $(basename "$out")"
 }
 
-# Disable the Debian default site to avoid conflicts
-a2dissite 000-default 000-default-ssl >/dev/null 2>&1 || true
-
-# Always render the HTTP vhost
-render_site /etc/apache2/sites-available/dev.conf.template /etc/apache2/sites-available/dev.conf
-
-# Optionally render the HTTPS vhost
-if [[ "${SSL_ENABLE:-0}" = "1" ]]; then
-  render_site /etc/apache2/sites-available/dev-ssl.conf.template /etc/apache2/sites-available/dev-ssl.conf
-  a2enmod ssl >/dev/null || true
-else
-  a2dissite dev-ssl.conf >/dev/null 2>&1 || true
+render "/opt/vhost-templates/dev.conf.template"     "/etc/apache2/sites-available/dev.conf"
+if [ "${SSL_ENABLE:-0}" = "1" ]; then
+  render "/opt/vhost-templates/dev-ssl.conf.template" "/etc/apache2/sites-available/dev-ssl.conf"
 fi
 
-# Minimal PassEnv (if your PHP relies on env vars directly)
-# You can also do SetEnv in your vhost templates.
-printf "PassEnv SDMC_ENV\n" > /etc/apache2/conf-enabled/00-passenv.conf
+# Enable our sites
+a2dissite 000-default >/dev/null 2>&1 || true
+a2ensite dev >/dev/null
+if [ "${SSL_ENABLE:-0}" = "1" ]; then
+  a2enmod ssl >/dev/null || true
+  a2ensite dev-ssl >/dev/null
+else
+  a2dissite dev-ssl >/dev/null 2>&1 || true
+fi
 
-# Check config before starting
-apachectl -t
+# Final config test
+apache2ctl -t
 
-# Hand off to the main process (from CMD)
-echo "[entrypoint] starting: $*"
-exec "$@"
+# Hand off to Apache
+exec apache2-foreground
+

@@ -233,6 +233,124 @@ clone_drupal_repo() {
   fi
 }
 
+# ---------- settings sync (update DB password and stage into Drupal) ----------
+update_and_stage_settings() {
+  local SRC="$REPO_ROOT/settings"
+  local DEST_ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}/docroot/sites/default"
+  local DEST="$DEST_ROOT/settings"
+  local SECRET="${MYSQL_DRUPAL_SECRET:-/srv/sdmc-miraweb/secrets/mysql_drupal_password}"
+
+  # Validate inputs
+  [[ -d "$SRC" ]] || { warn "No settings/ folder at $SRC; skipping settings sync."; return 0; }
+  [[ -f "$SECRET" ]] || die "Drupal DB password secret not found at $SECRET"
+  local drupal_pw; drupal_pw="$(<"$SECRET")"
+  [[ -n "$drupal_pw" ]] || die "Drupal DB password empty in $SECRET"
+
+  # Work in a temp copy so we never edit your repo files in place
+  local TMP; TMP="$(mktemp -d)"
+  cp -a "$SRC"/. "$TMP"/
+
+  # Escape password for safe sed replacement
+  local esc_pw="$drupal_pw"
+  esc_pw="${esc_pw//\\/\\\\}"   # backslashes
+  esc_pw="${esc_pw//&/\\&}"     # sed & back-ref
+  esc_pw="${esc_pw//|/\\|}"     # our delimiter
+
+  # Update any *.php file in the temp settings dir
+  shopt -s nullglob
+  local f
+  for f in "$TMP"/*.php; do
+    # Replace first occurrence of: 'password' => 'anything'
+    sed -E -i "s|('password'[[:space:]]*=>[[:space:]]*)'[^']*'|\1'${esc_pw}'|" "$f"
+  done
+  shopt -u nullglob
+
+  # Stage into Drupal sites/default/settings
+  as_root "install -d -m 2775 -o $USER -g ${TARGET_GROUP:-www-data} '$DEST_ROOT'"
+  as_root "install -d -m 2775 -o $USER -g ${TARGET_GROUP:-www-data} '$DEST'"
+
+  as_root "cp -a '$TMP'/.' '$DEST'"
+
+  # Ownership/perms: owner=$USER, group=www-data (or fallback), dirs 2775, files 664
+  if getent group www-data >/dev/null 2>&1; then
+    TARGET_GROUP="www-data"
+  else
+    TARGET_GROUP="$(id -gn)"
+  fi
+  as_root "chown -R $USER:$TARGET_GROUP '$DEST'"
+  as_root "find '$DEST' -type d -exec chmod 2775 {} +"
+  as_root "find '$DEST' -type f -exec chmod 664  {} +"
+
+  rm -rf "$TMP"
+  log "Settings synced → $DEST"
+}
+
+
+# ---------- permissions normalization (host) ----------
+ensure_www_data_group() {
+  # Ubuntu/Debian already have www-data (gid 33). If not, fall back to user's group.
+  if getent group www-data >/dev/null 2>&1; then
+    TARGET_GROUP="www-data"
+  else
+    warn "Group 'www-data' not found; using your primary group instead."
+    TARGET_GROUP="$(id -gn)"
+  fi
+  export TARGET_GROUP
+}
+
+fix_perms_repo() {
+  # Normalize ownership & permissions for the whole Drupal tree
+  # Uses $DRUPAL_HOST_PATH from .env or the default.
+  local ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"
+  [[ -d "$ROOT" ]] || { warn "Repo path $ROOT not found; skipping perms fix."; return 0; }
+
+  ensure_www_data_group
+
+  log "Normalizing ownership/permissions under $ROOT (owner: $USER, group: $TARGET_GROUP)…"
+  sudo chown -R "$USER":"$TARGET_GROUP" "$ROOT"
+
+  # Directories: setgid (2) + group-writable → keeps group sticky as new dirs/files are created
+  sudo find "$ROOT" -type d -exec chmod 2775 {} +
+
+  # Files: group-writable, no exec by default
+  sudo find "$ROOT" -type f -exec chmod 664 {} +
+
+  # Keep the top-level files dir exactly 775 (your requirement)
+  if [[ -d "$ROOT/docroot/sites/default/files" ]]; then
+    sudo chmod 775 "$ROOT/docroot/sites/default/files"
+  fi
+}
+
+fix_perms_theme_only() {
+  # If you want to re-run just for the theme after npm
+  local ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"
+  local THEME="$ROOT/docroot/themes/custom/sdmc"
+  [[ -d "$THEME" ]] || return 0
+
+  ensure_www_data_group
+  sudo chown -R "$USER":"$TARGET_GROUP" "$THEME"
+  sudo find "$THEME" -type d -exec chmod 2775 {} +
+  sudo find "$THEME" -type f -exec chmod 664 {} +
+}
+
+maybe_seed_node_as_root() {
+  # One-time helper: if node-sass/native deps exist and npm as user fails,
+  # allow a single root build inside the Node container, then chown back.
+  local ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"
+  local THEME="$ROOT/docroot/themes/custom/sdmc"
+  [[ -f "$THEME/package.json" ]] || return 0
+
+  if grep -q '"node-sass"' "$THEME/package.json" 2>/dev/null; then
+    log "Detected node-sass — performing one-time root build (Node 16)…"
+    USE_ONE_OFF=1 NODE_IMAGE=node:16-alpine ./bin/node --root install || true
+
+    ensure_www_data_group
+    sudo chown -R "$USER":"$TARGET_GROUP" "$THEME/node_modules" "$THEME/package-lock.json" 2>/dev/null || true
+    sudo find "$THEME/node_modules" -type d -exec chmod 2775 {} + 2>/dev/null || true
+    sudo find "$THEME/node_modules" -type f -exec chmod 664 {} + 2>/dev/null || true
+  fi
+}
+
 docker_up() {
   log "Starting containers…"
   dc up -d mysql memcached solr php81-apache
@@ -330,14 +448,14 @@ main() {
   ensure_sudo
   ensure_docker_group_active "$@"
   install_prereqs
-
   create_srv_dirs
   prompt_passwords
   prompt_sdmc_env
   ensure_env_file
   generate_certs
   clone_drupal_repo
-
+  fix_perms_repo
+  update_and_stage_settings
   docker_up
   wait_for_mysql
 
@@ -348,6 +466,8 @@ main() {
   composer_install
   drush_cim
   node_build
+  maybe_seed_node_as_root
+  fix_perms_theme_only
   drush_cache_rebuild
 
   log "Done. Visit: https://dev.loc:${APACHE_SSL_PORT:-8444} or http://dev.loc:${APACHE_PORT:-8081}"

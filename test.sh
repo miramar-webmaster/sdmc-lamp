@@ -1,6 +1,7 @@
-# from repo root
-git show 68f94d3:bin/composer > bin/composer-strict
-chmod +x bin/composer bin/composer-strict
-git add bin/composer bin/composer-strict
-git commit -m "Composer: minimal container-only wrapper; keep advanced checks as bin/composer-strict"
+# 1) Show which container is running and its entrypoint/cmd
+CID="$(docker compose ps -q php81-apache)"
+docker inspect "$CID" --format '{{.Config.Entrypoint}} {{.Config.Cmd}}'
+
+# If you see /entrypoint.sh or render-and-run.sh here,
+# you are still on the "runtime render" image.
 

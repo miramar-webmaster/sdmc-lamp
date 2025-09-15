@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-cd "$REPO_ROOT"
+# bin/mysql — run mysql client inside the DB container
+set -euo pipefail
 
-DB="${MYSQL_DATABASE:-sdmc}"
-USER="${MYSQL_USER:-drupal}"
+# shellcheck source=bin/_docker_helpers.sh
+. "$(cd "$(dirname "$0")" && pwd)/_docker_helpers.sh"
 
-docker compose --project-directory "$REPO_ROOT" up -d mysql >/dev/null
-exec docker compose --project-directory "$REPO_ROOT" \
-  exec -T mysql bash -lc 'MYSQL_PWD="$(cat ${MYSQL_ROOT_PASSWORD_FILE:-/run/secrets/mysql_root_password} 2>/dev/null || echo)" mysql -uroot '"$DB"' '"$*"
+: "${MYSQL_SERVICE:=mysql}"
+: "${MYSQL_DATABASE:=sdmc}"
+
+# Read root password from host secret (preferred)
+PW_FILE="$(grep -E '^MYSQL_ROOT_PASSWORD_FILE_HOST=' "$ENV_FILE" | cut -d= -f2- | tr -d '"')"
+if [[ -n "${PW_FILE:-}" && -r "$PW_FILE" ]]; then
+  MYSQL_PW="$(<"$PW_FILE")"
+else
+  echo "ERROR: MYSQL_ROOT_PASSWORD_FILE_HOST not set/readable in .env" >&2
+  exit 1
+fi
+
+# Ensure service is up
+dc up -d "$MYSQL_SERVICE" >/dev/null 2>&1 || true
+
+# Run the mysql client inside the container
+# Usage: bin/mysql [extra mysql args...]  (defaults to DB=$MYSQL_DATABASE)
+exec dc exec -T \
+  -e MYSQL_PWD="$MYSQL_PW" \
+  "$MYSQL_SERVICE" \
+  mysql -uroot ${MYSQL_DATABASE:+"$MYSQL_DATABASE"} "$@"
+

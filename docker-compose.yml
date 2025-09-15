@@ -28,18 +28,18 @@ services:
       context: ./php81-apache
       args:
         REQUIRED_PHP: "8.1"
-        APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-dev.loc}
-        APACHE_SERVER_ALIAS: ${APACHE_SERVER_ALIAS:-dev.loc}
-        APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024/docroot}
-        SDMC_ENV: ${SDMC_ENV:-dev}
-        SSL_CERT_FILE: ${SSL_CERT_FILE:-/certs/dev.crt}
-        SSL_CERT_KEY_FILE: ${SSL_CERT_KEY_FILE:-/certs/dev.key}
     environment:
-      SDMC_ENV: ${SDMC_ENV:-dev}      # still exported so PassEnv can expose it to PHP
+      APACHE_SERVER_NAME: ${APACHE_SERVER_NAME:-dev.loc}
+      APACHE_SERVER_ALIAS: ${APACHE_SERVER_ALIAS:-dev.loc}
+      APACHE_DOCROOT: ${APACHE_DOCROOT:-/var/www/miraweb2024/docroot}
+      SDMC_ENV: ${SDMC_ENV:-dev}
+      SSL_ENABLE: "${SSL_ENABLE:-1}"
+      SSL_CERT_FILE: ${SSL_CERT_FILE:-/certs/dev.crt}
+      SSL_CERT_KEY_FILE: ${SSL_CERT_KEY_FILE:-/certs/dev.key}
     volumes:
       - ${DRUPAL_HOST_PATH}:/var/www/miraweb2024:delegated
-      - ./php81-apache/vhosts/dev.conf.template:/etc/apache2/sites-available/dev.conf:ro
-      - ./php81-apache/vhosts/dev-ssl.conf.template:/etc/apache2/sites-available/dev-ssl.conf:ro
+      - ./php81-apache/vhosts/dev.conf.template:/etc/apache2/sites-available/dev.conf.template:ro
+      - ./php81-apache/vhosts/dev-ssl.conf.template:/etc/apache2/sites-available/dev-ssl.conf.template:ro
       - ./php81-apache/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
       - ./certs:/certs:ro
     ports:

@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-REPO_ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-cd "$REPO_ROOT"
+# bin/php — run PHP inside the PHP container (never on host)
+set -euo pipefail
 
-SERVICE="${PHP_SERVICE:-php81-apache}"
-DOCROOT="${DRUPAL_CONTAINER_PATH:-/var/www/miraweb2024}"
+# shellcheck source=bin/_docker_helpers.sh
+. "$(cd "$(dirname "$0")" && pwd)/_docker_helpers.sh"
 
-docker compose --project-directory "$REPO_ROOT" up -d "$SERVICE" >/dev/null
-exec docker compose --project-directory "$REPO_ROOT" \
-  exec -T "$SERVICE" bash -lc "cd '$DOCROOT' && php $*"
+: "${PHP_SERVICE:=php81-apache}"
+: "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage:"
+  echo "  ${0##*/} -v                   # php version"
+  echo "  ${0##*/} -m                   # php modules"
+  echo "  ${0##*/} -i                   # phpinfo (CLI)"
+  echo "  ${0##*/} -r 'echo 1;'         # run code"
+  echo "  ${0##*/} /path/in/repo/script.php [args]"
+  exit 1
+fi
+
+# Pass everything straight to the container’s php
+exec run_in_php php "$@"
+

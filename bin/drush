@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
-# bin/drush — run project Drush inside the PHP container, from the repo docroot.
+# bin/drush — run project Drush inside the PHP container
 set -euo pipefail
 
-# Load env (optional)
+# repo root + env
+REPO_ROOT="$(cd "$(dirname "$0")"/.. && pwd)"
+cd "$REPO_ROOT"
 [[ -f .env ]] && { set -a; . ./.env; set +a; }
 
-# Defaults; DRUSH_SERVICE can override which service to exec into
+# helpers (defines run_in_php, etc.)
+# shellcheck source=/dev/null
+. "$REPO_ROOT/bin/_docker_helpers.sh"
+
 : "${PHP_SERVICE:=php81-apache}"
 : "${DRUSH_SERVICE:=${PHP_SERVICE}}"
 : "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
 
-# Prefer matching your host UID/GID so generated files aren't root-owned
-: "${HOST_UID:=$(id -u)}"
-: "${HOST_GID:=$(id -g)}"
+# make sure php & db are up (exec requires running containers)
+docker compose up -d mysql "$DRUSH_SERVICE" >/dev/null
 
-# Make sure the DB and web container are up (no-op if already running)
-docker compose up -d mysql "${DRUSH_SERVICE}" >/dev/null
-
-# Execute Drush from the project (composer-installed) binary
-exec docker compose exec -T \
-  -u "${HOST_UID}:${HOST_GID}" \
-  -w "${DRUPAL_CONTAINER_PATH}" \
-  "${DRUSH_SERVICE}" ./vendor/bin/drush "$@"
+# run drush from the composer-installed binary
+run_in_php ./vendor/bin/drush "$@"
 
