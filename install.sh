@@ -234,56 +234,53 @@ clone_drupal_repo() {
 }
 
 # ---------- settings sync (update DB password and stage into Drupal) ----------
+# ---------- settings sync (update DB password and stage into Drupal) ----------
 update_and_stage_settings() {
   local SRC="$REPO_ROOT/settings"
   local DEST_ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}/docroot/sites/default"
   local DEST="$DEST_ROOT/settings"
   local SECRET="${MYSQL_DRUPAL_SECRET:-/srv/sdmc-miraweb/secrets/mysql_drupal_password}"
 
-  # Validate inputs
   [[ -d "$SRC" ]] || { warn "No settings/ folder at $SRC; skipping settings sync."; return 0; }
   [[ -f "$SECRET" ]] || die "Drupal DB password secret not found at $SECRET"
   local drupal_pw; drupal_pw="$(<"$SECRET")"
   [[ -n "$drupal_pw" ]] || die "Drupal DB password empty in $SECRET"
 
-  # Work in a temp copy so we never edit your repo files in place
+  # Work in a temp copy so we never edit repo files in-place
   local TMP; TMP="$(mktemp -d)"
   cp -a "$SRC"/. "$TMP"/
 
-  # Escape password for safe sed replacement
+  # Escape password for sed
   local esc_pw="$drupal_pw"
   esc_pw="${esc_pw//\\/\\\\}"   # backslashes
-  esc_pw="${esc_pw//&/\\&}"     # sed & back-ref
-  esc_pw="${esc_pw//|/\\|}"     # our delimiter
+  esc_pw="${esc_pw//&/\\&}"     # &
+  esc_pw="${esc_pw//|/\\|}"     # delimiter
 
   # Update any *.php file in the temp settings dir
   shopt -s nullglob
   local f
   for f in "$TMP"/*.php; do
-    # Replace first occurrence of: 'password' => 'anything'
     sed -E -i "s|('password'[[:space:]]*=>[[:space:]]*)'[^']*'|\1'${esc_pw}'|" "$f"
   done
   shopt -u nullglob
 
-  # Stage into Drupal sites/default/settings
-  as_root "install -d -m 2775 -o $USER -g ${TARGET_GROUP:-www-data} '$DEST_ROOT'"
-  as_root "install -d -m 2775 -o $USER -g ${TARGET_GROUP:-www-data} '$DEST'"
+  # Create dest and copy
+  local GROUP="www-data"; getent group "$GROUP" >/dev/null 2>&1 || GROUP="$(id -gn)"
+  as_root "install -d -m 2775 -o $USER -g $GROUP '$DEST_ROOT'"
+  as_root "install -d -m 2775 -o $USER -g $GROUP '$DEST'"
 
-  as_root "cp -a '$TMP'/.' '$DEST'"
+  # Copy the contents of TMP into $DEST
+  as_root "cp -a \"$TMP\"/. \"$DEST\"/"
 
-  # Ownership/perms: owner=$USER, group=www-data (or fallback), dirs 2775, files 664
-  if getent group www-data >/dev/null 2>&1; then
-    TARGET_GROUP="www-data"
-  else
-    TARGET_GROUP="$(id -gn)"
-  fi
-  as_root "chown -R $USER:$TARGET_GROUP '$DEST'"
+  # Ownership/perms
+  as_root "chown -R $USER:$GROUP '$DEST'"
   as_root "find '$DEST' -type d -exec chmod 2775 {} +"
   as_root "find '$DEST' -type f -exec chmod 664  {} +"
 
   rm -rf "$TMP"
   log "Settings synced → $DEST"
 }
+
 
 
 # ---------- permissions normalization (host) ----------
@@ -298,40 +295,60 @@ ensure_www_data_group() {
   export TARGET_GROUP
 }
 
-fix_perms_repo() {
-  # Normalize ownership & permissions for the whole Drupal tree
-  # Uses $DRUPAL_HOST_PATH from .env or the default.
-  local ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"
-  [[ -d "$ROOT" ]] || { warn "Repo path $ROOT not found; skipping perms fix."; return 0; }
-
-  ensure_www_data_group
-
-  log "Normalizing ownership/permissions under $ROOT (owner: $USER, group: $TARGET_GROUP)…"
-  sudo chown -R "$USER":"$TARGET_GROUP" "$ROOT"
-
-  # Directories: setgid (2) + group-writable → keeps group sticky as new dirs/files are created
-  sudo find "$ROOT" -type d -exec chmod 2775 {} +
-
-  # Files: group-writable, no exec by default
-  sudo find "$ROOT" -type f -exec chmod 664 {} +
-
-  # Keep the top-level files dir exactly 775 (your requirement)
-  if [[ -d "$ROOT/docroot/sites/default/files" ]]; then
-    sudo chmod 775 "$ROOT/docroot/sites/default/files"
+# Run a heredoc as root while passing env safely
+root_sh_env() {
+  # usage: root_sh_env VAR1=val VAR2=val <<'BASH'
+  # (the heredoc content is read from stdin)
+  if [[ $EUID -ne 0 ]]; then
+    sudo -E env "$@" bash -se
+  else
+    env "$@" bash -se
   fi
 }
 
-fix_perms_theme_only() {
-  # If you want to re-run just for the theme after npm
-  local ROOT="${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"
-  local THEME="$ROOT/docroot/themes/custom/sdmc"
-  [[ -d "$THEME" ]] || return 0
+# Generic normalizer: owner=$USER, group=www-data (fallback: user's group)
+# Usage:
+#   set_perms                       # whole repo (DRUPAL_HOST_PATH)
+#   set_perms "/var/www/.../sdmc"   # theme-only
+ set_perms() {
+  local TARGET="${1:-${DRUPAL_HOST_PATH:-/var/www/miraweb2024}}"
+  local OWNER="${SUDO_USER:-$USER}"
+  local GROUP="www-data"
+  getent group "$GROUP" >/dev/null 2>&1 || GROUP="$(id -gn)"
 
-  ensure_www_data_group
-  sudo chown -R "$USER":"$TARGET_GROUP" "$THEME"
-  sudo find "$THEME" -type d -exec chmod 2775 {} +
-  sudo find "$THEME" -type f -exec chmod 664 {} +
+  log "Normalizing ownership/permissions under $TARGET (owner: $OWNER, group: $GROUP)…"
+
+  root_sh_env OWNER="$OWNER" GROUP="$GROUP" TARGET="$TARGET" <<'BASH'
+set -e
+# 1) Ownership
+chown -R "$OWNER:$GROUP" "$TARGET"
+
+# 2) Directories: 2775 (setgid so new files inherit group)
+find "$TARGET" -type d -print0 | xargs -0 chmod 2775
+
+# 3) Files: 664
+find "$TARGET" -type f -print0 | xargs -0 chmod 664
+BASH
+
+  # If we touched the project root, also ensure sites/default/files is writable
+  if [[ "$TARGET" == "${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"* ]]; then
+    local FILES_DIR="$DRUPAL_HOST_PATH/docroot/sites/default/files"
+    if [[ -d "$FILES_DIR" ]]; then
+      log "Ensuring writable files dir: $FILES_DIR"
+      root_sh_env OWNER="${SUDO_USER:-$USER}" GROUP="$GROUP" FILES_DIR="$FILES_DIR" <<'BASH'
+set -e
+chown -R "$OWNER:$GROUP" "$FILES_DIR"
+find "$FILES_DIR" -type d -print0 | xargs -0 chmod 2775
+find "$FILES_DIR" -type f -print0 | xargs -0 chmod 664
+BASH
+    fi
+  fi
 }
+
+# Optional convenience wrappers (can delete old ones):
+# BROKEN LINE COMMENTED OUT: set_perms()        { set_perms "${DRUPAL_HOST_PATH:-/var/www/miraweb2024}"; }
+# BROKEN LINE COMMENTED OUT: set_perms "${DRUPAL_HOST_PATH:-/var/www/miraweb2024}/docroot/themes/custom/sdmc"()  { set_perms "${DRUPAL_HOST_PATH:-/var/www/miraweb2024}/docroot/themes/custom/sdmc"; }
+
 
 maybe_seed_node_as_root() {
   # One-time helper: if node-sass/native deps exist and npm as user fails,
@@ -454,7 +471,7 @@ main() {
   ensure_env_file
   generate_certs
   clone_drupal_repo
-  fix_perms_repo
+  set_perms
   update_and_stage_settings
   docker_up
   wait_for_mysql
@@ -467,11 +484,10 @@ main() {
   drush_cim
   node_build
   maybe_seed_node_as_root
-  fix_perms_theme_only
+  set_perms "$DRUPAL_HOST_PATH/docroot/themes/custom/sdmc"
   drush_cache_rebuild
 
   log "Done. Visit: https://dev.loc:${APACHE_SSL_PORT:-8444} or http://dev.loc:${APACHE_PORT:-8081}"
 }
 
 main "$@"
-
