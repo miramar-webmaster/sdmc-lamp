@@ -1,23 +1,6 @@
 #!/usr/bin/env bash
-# bin/drush — run project Drush inside the PHP container
 set -euo pipefail
-
-# repo root + env
-REPO_ROOT="$(cd "$(dirname "$0")"/.. && pwd)"
-cd "$REPO_ROOT"
-[[ -f .env ]] && { set -a; . ./.env; set +a; }
-
-# helpers (defines run_in_php, etc.)
-# shellcheck source=/dev/null
-. "$REPO_ROOT/bin/_docker_helpers.sh"
-
-: "${PHP_SERVICE:=php81-apache}"
-: "${DRUSH_SERVICE:=${PHP_SERVICE}}"
-: "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
-
-# make sure php & db are up (exec requires running containers)
-docker compose up -d mysql "$DRUSH_SERVICE" >/dev/null
-
-# run drush from the composer-installed binary
-run_in_php ./vendor/bin/drush "$@"
+. "$(cd "$(dirname "$0")" && pwd)/_docker_helpers.sh"
+# prefer project drush if present
+exec run_in_php sh -lc '[ -x vendor/bin/drush ] && exec vendor/bin/drush "$@" || exec drush "$@"' -- "$@"
 

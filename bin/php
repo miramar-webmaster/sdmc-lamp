@@ -1,23 +1,5 @@
 #!/usr/bin/env bash
-# bin/php — run PHP inside the PHP container (never on host)
 set -euo pipefail
-
-# shellcheck source=bin/_docker_helpers.sh
 . "$(cd "$(dirname "$0")" && pwd)/_docker_helpers.sh"
-
-: "${PHP_SERVICE:=php81-apache}"
-: "${DRUPAL_CONTAINER_PATH:=/var/www/miraweb2024}"
-
-if [[ $# -eq 0 ]]; then
-  echo "Usage:"
-  echo "  ${0##*/} -v                   # php version"
-  echo "  ${0##*/} -m                   # php modules"
-  echo "  ${0##*/} -i                   # phpinfo (CLI)"
-  echo "  ${0##*/} -r 'echo 1;'         # run code"
-  echo "  ${0##*/} /path/in/repo/script.php [args]"
-  exit 1
-fi
-
-# Pass everything straight to the container’s php
-exec run_in_php php "$@"
+exec run_in_php "$@"
 

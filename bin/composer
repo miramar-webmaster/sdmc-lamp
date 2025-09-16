@@ -1,26 +1,5 @@
 #!/usr/bin/env bash
-# bin/composer — run Composer in the PHP container, prefer dist, quiet by default
 set -euo pipefail
-
-REPO_ROOT="$(cd "$(dirname "$0")"/.. && pwd)"
-cd "$REPO_ROOT"
-
-# Load .env for PHP_SERVICE / DRUPAL_CONTAINER_PATH / HOST_UID/GID
-[[ -f .env ]] && { set -a; . ./.env; set +a; }
-
-# Helpers
-# shellcheck source=/dev/null
-. "$REPO_ROOT/bin/_docker_helpers.sh"
-
-# Quiet & dist defaults — override with COMPOSER_VERBOSE=1 if you want full output
-QUIET_FLAGS=()
-[[ "${COMPOSER_VERBOSE:-0}" != "1" ]] && QUIET_FLAGS=(-q --no-interaction --no-progress)
-
-DEFAULT_FLAGS=(--prefer-dist -o)
-
-run_in_php env \
-  COMPOSER_HOME=/tmp \
-  COMPOSER_CACHE_DIR=/tmp/composer-cache \
-  CLICOLOR_FORCE=1 \
-  composer --ansi "${QUIET_FLAGS[@]}" "${DEFAULT_FLAGS[@]}" "$@"
+. "$(cd "$(dirname "$0")" && pwd)/_docker_helpers.sh"
+exec run_in_php composer "$@"
 
